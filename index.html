@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Support Operations Control Center</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #f4f6f8;
+            --surface: #ffffff;
+            --text-main: #12344d;
+            --text-sub: #697d8d;
+            --border: #cfd7df;
+            --accent: #2684ff;
+        }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background-color: var(--bg-primary); 
+            color: var(--text-main); 
+            margin: 0; 
+            padding: 24px; 
+        }
+        .dashboard-container { max-width: 1400px; margin: 0 auto; }
+        
+        /* Header & Filter Controls Bar */
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            background: var(--surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        h1 { margin: 0; font-size: 24px; color: var(--text-main); font-weight: 700; }
+        .filters-group { display: flex; gap: 16px; }
+        .filter-select {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background-color: var(--surface);
+            color: var(--text-main);
+            font-size: 14px;
+            outline: none;
+            cursor: pointer;
+            min-width: 160px;
+        }
+
+        /* High-Level Summary Cards */
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .kpi-card {
+            background: var(--surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            border-left: 4px solid var(--accent);
+        }
+        .kpi-label { font-size: 13px; color: var(--text-sub); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+        .kpi-value { font-size: 28px; font-weight: 700; margin-top: 8px; }
+
+        /* Multi-Chart Analytics Grid */
+        .metrics-grid { 
+            display: grid; 
+            grid-template-columns: repeat(2, 1fr); 
+            gap: 24px; 
+            margin-bottom: 24px;
+        }
+        @media (max-width: 900px) { .metrics-grid { grid-template-columns: 1fr; } }
+        
+        .chart-card { 
+            background: var(--surface); 
+            padding: 24px; 
+            border-radius: 8px; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
+            position: relative;
+        }
+        .chart-card.full-width { grid-column: span 2; }
+        @media (max-width: 900px) { .chart-card.full-width { grid-column: span 1; } }
+        
+        h3 { margin: 0 0 20px 0; font-size: 16px; color: var(--text-main); font-weight: 600; border-bottom: 1px solid #f0f2f4; padding-bottom: 12px; }
+        .chart-wrapper { position: relative; height: 320px; width: 100%; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    
+    <div class="header-bar">
+        <h1>Support Review Operations</h1>
+        <div class="filters-group">
+            <select id="filterEnterprise" class="filter-select"><option value="All">All Enterprises</option></select>
+            <select id="filterProduct" class="filter-select"><option value="All">All Products</option></select>
+            <select id="filterAgent" class="filter-select"><option value="All">All Agents</option></select>
+        </div>
+    </div>
+
+    <div class="kpi-row">
+        <div class="kpi-card" style="border-left-color: #2684ff;">
+            <div class="kpi-label">Total Volume</div>
+            <div id="kpiTotal" class="kpi-value">0</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: #00795b;">
+            <div class="kpi-label">Resolved Tickets</div>
+            <div id="kpiResolved" class="kpi-value">0</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: #ffab00;">
+            <div class="kpi-label">Open / Actionable</div>
+            <div id="kpiOpen" class="kpi-value">0</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: #ff5630;">
+            <div class="kpi-label">Avg SLA Resolution</div>
+            <div id="kpiSLA" class="kpi-value">0h</div>
+        </div>
+    </div>
+    
+    <div class="metrics-grid">
+        <div class="chart-card">
+            <h3>Volume Distribution by Status</h3>
+            <div class="chart-wrapper"><canvas id="statusChart"></canvas></div>
+        </div>
+
+        <div class="chart-card">
+            <h3>Urgency Matrix (Priority Distribution)</h3>
+            <div class="chart-wrapper"><canvas id="priorityChart"></canvas></div>
+        </div>
+
+        <div class="chart-card full-width">
+            <h3>Timeline Trend (Created vs. Resolved Timestamps)</h3>
+            <div class="chart-wrapper"><canvas id="timelineChart"></canvas></div>
+        </div>
+
+        <div class="chart-card full-width">
+            <h3>Enterprise Case Load Analysis</h3>
+            <div class="chart-wrapper"><canvas id="enterpriseChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Live CSV link extracted directly from your published sheet properties
+    const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTfd_x3OXVtFAJC2Ecoz0a_j-JYp70gcD-C5Mooyib74cXOZWeLOKH_5E0bwgGNY8xNd9O4bMsWXE6l/pub?output=csv';
+
+    let rawDataset = [];
+    let chartInstances = {};
+
+    // Fetch and initialize cross-filtering logic
+    Papa.parse(SHEET_CSV_URL, {
+        download: true,
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+            rawDataset = results.data;
+            populateFilterDropdowns(rawDataset);
+            attachFilterEventListeners();
+            processAndRenderDashboard();
+        }
+    });
+
+    function populateFilterDropdowns(data) {
+        const enterprises = new Set();
+        const products = new Set();
+        const agents = new Set();
+
+        data.forEach(row => {
+            if(row['Enterprise Name']) enterprises.add(row['Enterprise Name'].trim());
+            if(row['Product (Studio/Vini)']) products.add(row['Product (Studio/Vini)'].trim());
+            if(row['L1 Agent']) agents.add(row['L1 Agent'].trim());
+        });
+
+        populateSelect('filterEnterprise', sortedArrayFromSet(enterprises));
+        populateSelect('filterProduct', sortedArrayFromSet(products));
+        populateSelect('filterAgent', sortedArrayFromSet(agents));
+    }
+
+    function sortedArrayFromSet(set) { return Array.from(set).sort(); }
+
+    function populateSelect(id, items) {
+        const select = document.getElementById(id);
+        items.forEach(item => {
+            if(!item) return;
+            const opt = document.createElement('option');
+            opt.value = item;
+            opt.innerHTML = item;
+            select.appendChild(opt);
+        });
+    }
+
+    function attachFilterEventListeners() {
+        ['filterEnterprise', 'filterProduct', 'filterAgent'].forEach(id => {
+            document.getElementById(id).addEventListener('change', processAndRenderDashboard);
+        });
+    }
+
+    function processAndRenderDashboard() {
+        // Apply target dropdown logic across your columns
+        const selEnt = document.getElementById('filterEnterprise').value;
+        const selProd = document.getElementById('filterProduct').value;
+        const selAgent = document.getElementById('filterAgent').value;
+
+        const filteredData = rawDataset.filter(row => {
+            if (selEnt !== 'All' && row['Enterprise Name']?.trim() !== selEnt) return false;
+            if (selProd !== 'All' && row['Product (Studio/Vini)']?.trim() !== selProd) return false;
+            if (selAgent !== 'All' && row['L1 Agent']?.trim() !== selAgent) return false;
+            return true;
+        });
+
+        // Compute Operational Metric Aggregations
+        let totalCount = filteredData.length;
+        let resolvedCount = 0;
+        let openCount = 0;
+        let totalResTime = 0;
+        let resTimeCount = 0;
+
+        const statusMap = {};
+        const priorityMap = {};
+        const timelineMap = {};
+        const enterpriseMap = {};
+
+        filteredData.forEach(row => {
+            // Status aggregation
+            const status = row['Status'] ? row['Status'].trim() : 'Unknown';
+            statusMap[status] = (statusMap[status] || 0) + 1;
+
+            if (status.toLowerCase() === 'resolved' || status.toLowerCase() === 'closed') {
+                resolvedCount++;
+            } else {
+                openCount++;
+            }
+
+            // Priority aggregation
+            const priority = row['Priority'] ? row['Priority'].trim() : 'Unassigned';
+            priorityMap[priority] = (priorityMap[priority] || 0) + 1;
+
+            // Resolution SLA calculations
+            const resTimeRaw = row['Resolution time (in hrs)'];
+            if (resTimeRaw) {
+                const resTime = parseFloat(resTimeRaw);
+                if (!isNaN(resTime)) {
+                    totalResTime += resTime;
+                    resTimeCount++;
+                }
+            }
+
+            // Enterprise profile load breakdown
+            const entName = row['Enterprise Name'] ? row['Enterprise Name'].trim() : 'Other/Direct';
+            enterpriseMap[entName] = (enterpriseMap[entName] || 0) + 1;
+
+            // Trend parsing based on timestamps
+            let rawDate = row['Created time'] || row['Created Time'];
+            if (rawDate) {
+                const dateKey = rawDate.split(' ')[0]; // Group by structural Date string components
+                if (!timelineMap[dateKey]) timelineMap[dateKey] = { created: 0, resolved: 0 };
+                timelineMap[dateKey].created++;
+            }
+
+            let rawResDate = row['Resolved time'] || row['Resolved Time'];
+            if (rawResDate) {
+                const resDateKey = rawResDate.split(' ')[0];
+                if (!timelineMap[resDateKey]) timelineMap[resDateKey] = { created: 0, resolved: 0 };
+                timelineMap[resDateKey].resolved++;
+            }
+        });
+
+        // Map Calculated Values back into the UI View Objects
+        document.getElementById('kpiTotal').innerText = totalCount;
+        document.getElementById('kpiResolved').innerText = resolvedCount;
+        document.getElementById('kpiOpen').innerText = openCount;
+        document.getElementById('kpiSLA').innerText = resTimeCount > 0 
+            ? (totalResTime / resTimeCount).toFixed(1) + 'h' 
+            : '0h';
+
+        // Destroy older tracking chart frames before rendering updates
+        updateChart('statusChart', 'doughnut', Object.keys(statusMap), Object.values(statusMap), ['#2684ff', '#00795b', '#ffab00', '#ff5630', '#79f2c3', '#6554c0']);
+        updateChart('priorityChart', 'pie', Object.keys(priorityMap), Object.values(priorityMap), ['#ff5630', '#ffab00', '#36b37e', '#0052cc']);
+        
+        // Render Line Timelines
+        const sortedDates = Object.keys(timelineMap).sort((a,b) => new Date(a) - new Date(b));
+        const createdTrend = sortedDates.map(d => timelineMap[d].created);
+        const resolvedTrend = sortedDates.map(d => timelineMap[d].resolved);
+        updateLineChart('timelineChart', sortedDates, createdTrend, resolvedTrend);
+
+        // Sort Enterprise loads for cleanly arranged bar groupings
+        const sortedEnts = Object.entries(enterpriseMap).sort((a,b) => b[1] - a[1]).slice(0, 10);
+        updateChart('enterpriseChart', 'bar', sortedEnts.map(e => e[0]), sortedEnts.map(e => e[1]), '#6554c0', 'Tickets Managed');
+    }
+
+    function updateChart(canvasId, type, labels, data, colors, labelText = 'Count') {
+        if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
+        
+        const config = {
+            type: type,
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: labelText,
+                    data: data,
+                    backgroundColor: colors,
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
+            }
+        };
+
+        if(type === 'bar') {
+            config.options.scales = { y: { beginAtZero: true } };
+            config.options.plugins.legend.display = false;
+        }
+
+        chartInstances[canvasId] = new Chart(document.getElementById(canvasId), config);
+    }
+
+    function updateLineChart(canvasId, labels, createdData, resolvedData) {
+        if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
+
+        chartInstances[canvasId] = new Chart(document.getElementById(canvasId), {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Tickets Opened', data: createdData, borderColor: '#2684ff', tension: 0.2, fill: false },
+                    { label: 'Tickets Resolved', data: resolvedData, borderColor: '#00795b', tension: 0.2, fill: false }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom' } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+    }
+</script>
+</body>
+</html>
